@@ -109,6 +109,7 @@ class WinLoss {
     endPl = {}
   ) {
     let prevMovementsRes = {}
+    let prevRes = 0
 
     return ({
       walletsGroupedByTimeframe = {},
@@ -148,9 +149,13 @@ class WinLoss {
           return { ...accum }
         }
 
+        const timePeriodRes = res - prevRes
+        prevRes = res
+
         return {
           ...accum,
-          [symb]: res
+          [symb]: res,
+          [`timePeriod${symb}`]: timePeriodRes
         }
       }, {})
     }
