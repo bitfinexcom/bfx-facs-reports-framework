@@ -7,9 +7,6 @@ const {
 } = require('bfx-report/workers/loc.api/helpers')
 
 const { getTimeframeQuery } = require('../dao/helpers')
-const {
-  SyncedPositionsSnapshotParamsError
-} = require('../../errors')
 
 const { decorateInjectable } = require('../../di/utils')
 
@@ -110,32 +107,11 @@ class PositionsSnapshot {
     const isStartExisted = Number.isInteger(start)
     const isEndExisted = Number.isInteger(end)
 
-    const startSqlTimeframe = this._getTimeframeQuery(
-      'startMtsUpdateStr',
-      isStartExisted
-    )
-    const endSqlTimeframe = this._getTimeframeQuery(
-      'endMtsUpdateStr',
-      isEndExisted
-    )
-
-    const startMtsUpdateStr = this._getMtsStr(
-      start,
-      'startMtsUpdateStr'
-    )
-    const endMtsUpdateStr = this._getMtsStr(
-      end,
-      'endMtsUpdateStr'
-    )
-
     const gteFilter = isStartExisted
       ? { $gte: { mtsUpdate: start } }
       : {}
     const lteFilter = isEndExisted
       ? { $lte: { mtsUpdate: end } }
-      : {}
-    const eqFilter = isStartExisted || isEndExisted
-      ? { $eq: { ...startMtsUpdateStr, ...endMtsUpdateStr } }
       : {}
 
     return this.dao.getElemsInCollBy(
@@ -144,15 +120,10 @@ class PositionsSnapshot {
         filter: {
           user_id: user._id,
           ...gteFilter,
-          ...lteFilter,
-          ...eqFilter
+          ...lteFilter
         },
         sort: [['mtsUpdate', -1]],
-        projection: [
-          ...this.positionsSnapshotModel,
-          ...startSqlTimeframe,
-          ...endSqlTimeframe
-        ],
+        projection: this.positionsSnapshotModel,
         exclude: ['user_id'],
         isExcludePrivate: true
       }
@@ -258,12 +229,14 @@ class PositionsSnapshot {
     } = { ...opts }
     const positionsSnapshot = []
     const tickers = []
+    const actualPrices = new Map()
 
     for (const position of positions) {
       const {
         symbol,
         basePrice,
-        amount
+        amount,
+        marginFunding
       } = { ...position }
 
       const resPositions = {
@@ -279,9 +252,14 @@ class PositionsSnapshot {
 
         continue
       }
+      if (!actualPrices.has(symbol)) {
+        const _actualPrice = await this.currencyConverter
+          .getPrice(symbol, end)
 
-      const actualPrice = await this.currencyConverter
-        .getPrice(symbol, end)
+        actualPrices.set(symbol, _actualPrice)
+      }
+
+      const actualPrice = actualPrices.get(symbol)
 
       if (
         !Number.isFinite(actualPrice) ||
@@ -293,8 +271,17 @@ class PositionsSnapshot {
         continue
       }
 
-      const pl = (actualPrice - basePrice) * amount
-      const plPerc = ((actualPrice / basePrice) - 1) * 100 * Math.sign(amount)
+      const _marginFunding = Number.isFinite(marginFunding)
+        ? marginFunding
+        : 0
+      const isMarginFundingConverted = amount > 0
+      const convertedMarginFunding = isMarginFundingConverted
+        ? _marginFunding
+        : _marginFunding * actualPrice
+
+      const pl = ((actualPrice - basePrice) * Math.abs(amount)) -
+        Math.abs(convertedMarginFunding)
+      const plPerc = ((actualPrice / basePrice) - 1) * 100
       const {
         plUsd,
         currency
@@ -587,13 +574,6 @@ class PositionsSnapshot {
     const user = await this.authenticator
       .verifyRequestUser({ auth })
     const emptyRes = []
-
-    if (
-      Number.isInteger(start) &&
-      Number.isInteger(end)
-    ) {
-      throw new SyncedPositionsSnapshotParamsError()
-    }
 
     const syncedPositionsSnapshot = await this._getPositionsSnapshotFromDb(
       user,

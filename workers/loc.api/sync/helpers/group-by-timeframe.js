@@ -117,7 +117,14 @@ const _getGroupItem = async (
   const mts = _isTimeframe(timeframe)
     ? getStartMtsByTimeframe(last, timeframe)
     : _mts
-  const vals = await calcDataFn(data, symbolFieldName, symbol)
+  const args = {
+    symbolFieldName,
+    symbol,
+    timeframe,
+    mts
+  }
+
+  const vals = await calcDataFn(data, args)
 
   return {
     mts,
